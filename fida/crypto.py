@@ -1,66 +1,56 @@
-import base64
-import hashlib
-import os
+from __future__ import annotations
+from dataclasses import dataclass
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import os
+import secrets
+from fida.util import b64u_encode, b64u_decode, sha256_hex
 
+@dataclass
+class KeyPair:
+    kid: str
+    priv: Ed25519PrivateKey
+    pub: Ed25519PublicKey
 
-def b64u_encode(b: bytes) -> str:
-    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+def new_ed25519_kid() -> str:
+    return sha256_hex(secrets.token_bytes(32))[:32]
 
+def generate_keypair() -> KeyPair:
+    priv = Ed25519PrivateKey.generate()
+    pub = priv.public_key()
+    kid = new_ed25519_kid()
+    return KeyPair(kid=kid, priv=priv, pub=pub)
 
-def b64u_decode(s: str) -> bytes:
-    pad = "=" * ((4 - (len(s) % 4)) % 4)
-    return base64.urlsafe_b64decode((s + pad).encode())
+def pub_b64u(pub: Ed25519PublicKey) -> str:
+    raw = pub.public_bytes_raw()
+    return b64u_encode(raw)
 
-
-def sha256_hex(b: bytes) -> str:
-    return hashlib.sha256(b).hexdigest()
-
-
-def new_kid() -> str:
-    return b64u_encode(os.urandom(16))
-
-
-def ed25519_from_seed_b64(seed_b64: str) -> Ed25519PrivateKey:
-    seed = base64.b64decode(seed_b64)
-    if len(seed) != 32:
-        raise ValueError("Ed25519 seed must be 32 bytes base64")
-    return Ed25519PrivateKey.from_private_bytes(seed)
-
-
-def ed25519_seed_b64(priv: Ed25519PrivateKey) -> str:
-    seed = priv.private_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PrivateFormat.Raw,
-        encryption_algorithm=serialization.NoEncryption()
-    )
-    return base64.b64encode(seed).decode()
-
-
-def ed25519_public_jwk(kid: str, pub: Ed25519PublicKey) -> dict:
-    raw = pub.public_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PublicFormat.Raw
-    )
-    return {
-        "kty": "OKP",
-        "crv": "Ed25519",
-        "kid": kid,
-        "x": b64u_encode(raw),
-        "use": "sig",
-        "alg": "EdDSA",
-    }
-
+def pub_from_b64u(s: str) -> Ed25519PublicKey:
+    return Ed25519PublicKey.from_public_bytes(b64u_decode(s))
 
 def sign_b64u(priv: Ed25519PrivateKey, msg: bytes) -> str:
     sig = priv.sign(msg)
     return b64u_encode(sig)
 
-
-def verify_sig(pub: Ed25519PublicKey, msg: bytes, sig_b64u: str) -> bool:
+def verify(pub: Ed25519PublicKey, msg: bytes, sig_b64u: str) -> bool:
     try:
         pub.verify(b64u_decode(sig_b64u), msg)
         return True
     except Exception:
         return False
+
+def envelope_encrypt(master_key_b64u: str, plaintext: bytes) -> str:
+    mk = b64u_decode(master_key_b64u)
+    if len(mk) != 32:
+        raise ValueError("FIDA_MASTER_KEY_B64 must be 32 bytes (base64url)")
+    nonce = os.urandom(12)
+    aes = AESGCM(mk)
+    ct = aes.encrypt(nonce, plaintext, None)
+    return b64u_encode(nonce + ct)
+
+def envelope_decrypt(master_key_b64u: str, blob_b64u: str) -> bytes:
+    mk = b64u_decode(master_key_b64u)
+    raw = b64u_decode(blob_b64u)
+    nonce, ct = raw[:12], raw[12:]
+    aes = AESGCM(mk)
+    return aes.decrypt(nonce, ct, None)
