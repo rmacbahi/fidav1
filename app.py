@@ -1,34 +1,20 @@
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fida.config import settings
-from fida.routers.public import router as public_router
-from fida.routers.admin import router as admin_router
-from fida.routers.jwks import router as jwks_router
-from fida.db import init_db
-from fida.middleware import RequestIdMiddleware
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from starlette.responses import Response
 
-app = FastAPI(
-    title="FIDA Rail V1",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url=None,
-)
+from fida.middleware import BodySizeMiddleware
+from fida.api_admin import router as admin_router
+from fida.api_public import router as public_router
+from fida.jwks import router as jwks_router
 
-app.add_middleware(RequestIdMiddleware)
+app = FastAPI(title="FIDA Rail V1", version="1.0.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.allowed_origins_list,
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(BodySizeMiddleware)
 
 app.include_router(public_router)
 app.include_router(admin_router)
 app.include_router(jwks_router)
 
-
-@app.on_event("startup")
-def _startup():
-    init_db()
+@app.get("/metrics")
+def metrics():
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

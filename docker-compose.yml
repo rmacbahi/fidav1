@@ -1,0 +1,39 @@
+version: "3.9"
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: fida
+      POSTGRES_USER: fida
+      POSTGRES_PASSWORD: fida
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  api:
+    build: .
+    environment:
+      FIDA_ENV: dev
+      DATABASE_URL: postgresql+psycopg2://fida:fida@postgres:5432/fida
+      REDIS_URL: redis://redis:6379/0
+      # Generate a 32-byte base64url key (see README). This is envelope master key.
+      FIDA_MASTER_KEY_B64: "REPLACE_ME_32B_B64URL"
+      # One-time bootstrap token
+      FIDA_BOOTSTRAP_TOKEN: "dev-bootstrap-token"
+      # Optional: trusted reverse proxy / rate settings
+      FIDA_RATE_LIMIT_RPS: "20"
+      FIDA_RATE_LIMIT_BURST: "40"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+      - redis
+
+volumes:
+  pgdata:
